@@ -1,5 +1,8 @@
 #include "postgres.h"
+
 #include <string.h>
+
+#include "catalog/pg_type.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "tsearch/ts_utils.h"
@@ -31,7 +34,11 @@ ts_lexemes(PG_FUNCTION_ARGS)
 
   int i;
   Datum result;
-  text *cur;
+
+  TupleDesc tupdesc;
+  char *values[2];
+  char n[16];
+  HeapTuple tuple;
 
   if (SRF_IS_FIRSTCALL())
     {
@@ -49,7 +56,16 @@ ts_lexemes(PG_FUNCTION_ARGS)
       fctx->entries = ARRPTR(vector);
       fctx->str = STRPTR(vector);
 
+      tupdesc = CreateTemplateTupleDesc(2, false);
+      TupleDescInitEntry(tupdesc, (AttrNumber) 1, "lexeme",
+			 TEXTOID, -1, 0);
+      TupleDescInitEntry(tupdesc, (AttrNumber) 2, "n",
+			 INT4OID, -1, 0);
+      funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+      funcctx->attinmeta = TupleDescGetAttInMetadata(tupdesc);
+
       funcctx->user_fctx = fctx;
+
       MemoryContextSwitchTo(oldcontext);
 
     }
@@ -62,11 +78,17 @@ ts_lexemes(PG_FUNCTION_ARGS)
 
       i = fctx->nextelem++;
       
-      cur = (text *) palloc(VARHDRSZ + fctx->entries[i].len);
-      SET_VARSIZE(cur, VARHDRSZ + fctx->entries[i].len);
-      memcpy(VARDATA(cur), fctx->str + fctx->entries[i].pos, fctx->entries[i].len);
+      values[0] = palloc(fctx->entries[i].len + 1);
+      memcpy(values[0], fctx->str + fctx->entries[i].pos, fctx->entries[i].len);
+      (values[0])[fctx->entries[i].len] = '\0';
 
-      result = PointerGetDatum(cur);
+      sprintf(n, "%d", POSDATALEN(fctx->vector, &(fctx->entries[i])));
+      values[1] = n;
+      
+      tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
+      result = HeapTupleGetDatum(tuple);
+
+      pfree(values[0]);
 
       SRF_RETURN_NEXT(funcctx, result);
 
